@@ -1,2 +1,2 @@
 "# sftp-server" 
-See https://www.eddylangley.net/nih/sftp/
+See https://eddylangley.net/nih-sftp-server/
