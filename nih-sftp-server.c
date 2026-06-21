@@ -58,6 +58,7 @@ _BSD_SOURCE for futimes; otherwise sftp_fsetstat() will return unsupported
 #include <sys/time.h> /* utimes, futimes */
 #include <sys/stat.h> /* f/l/stat/at, chmod */
 #include <dirent.h> /* DIR*, readdir and friends */
+#include <libgen.h> /* dirname, basename */
 
 /* draft-ietf-secsh-filexfer-02 */
 #define SSH_FXP_INIT                1
@@ -971,15 +972,73 @@ static void sftp_realpath(void)
 {
 #if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200809L
     uint32_t id = get_uint32();
-    const char *sz_path = get_string(NULL);
+    uint32_t path_len;
+    const char *sz_path = get_string(&path_len);
     char *sz_fullname;
     attrs_t attr;
 
+    /* Empty paths cause issues to the code below, use . instead */
+    if (path_len == 0)
+    {
+        path_len = 1;
+        sz_path = ".";
+    }
+
     sz_fullname = realpath(sz_path, NULL);
+
     if (!sz_fullname)
     {
-        put_status(id, errno_to_sftp(errno));
-        return;
+        if (errno == ENOENT)
+        {
+            /* Handle paths whose basename does not exist yet */
+
+            if (sz_path[path_len - 1] == '/')
+            {
+                put_status(id, errno_to_sftp(errno));
+                return;
+            }
+
+            char *sz_path_copy = strdup(sz_path);
+            char *sz_dirname = dirname(sz_path_copy);
+            char *sz_fulldirname = realpath(sz_dirname, NULL);
+
+            if (!sz_fulldirname)
+            {
+                free(sz_path_copy);
+                put_status(id, errno_to_sftp(errno));
+                return;
+            }
+
+            /* Find basename manually to save one allocation */
+            const char *slash_ptr = strrchr(sz_path, '/');
+            const char *sz_basename = slash_ptr ? slash_ptr+1 : sz_path;
+            int discard_basename = 0;
+
+            /* Discard empty basenames coming from paths terminated by '/' */
+            discard_basename |= strcmp(sz_basename, "") == 0;
+            /* Discard useless . */
+            discard_basename |= strcmp(sz_basename, ".") == 0;
+            /* No need to discard .., it cannot appear here */
+
+            if (discard_basename)
+            {
+                sz_fullname = sz_fulldirname;
+            }
+            else
+            {
+                uint32_t fullname_len = 0;
+
+                fullname_len += strlen(sz_fulldirname);
+                fullname_len += 1;
+                fullname_len += strlen(sz_basename);
+
+                sz_fullname = malloc(fullname_len + 1);
+                sprintf(sz_fullname, "%s/%s", sz_fulldirname, sz_basename);
+            }
+
+            free(sz_fulldirname);
+            free(sz_path_copy);
+        }
     }
 
     put_byte(SSH_FXP_NAME);
