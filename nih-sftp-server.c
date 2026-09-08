@@ -999,12 +999,16 @@ static void sftp_realpath(void)
             }
 
             char *sz_path_copy = strdup(sz_path);
-            char *sz_dirname = dirname(sz_path_copy);
-            char *sz_fulldirname = realpath(sz_dirname, NULL);
+            if (!sz_path_copy)
+            {
+                put_status(id, SSH_FX_FAILURE);
+                return;
+            }
+            char *sz_fulldirname = realpath(dirname(sz_path_copy), NULL);
+            free(sz_path_copy);
 
             if (!sz_fulldirname)
             {
-                free(sz_path_copy);
                 put_status(id, errno_to_sftp(errno));
                 return;
             }
@@ -1033,11 +1037,15 @@ static void sftp_realpath(void)
                 fullname_len += strlen(sz_basename);
 
                 sz_fullname = malloc(fullname_len + 1);
+                if (!sz_fullname)
+                {
+                    free(sz_fulldirname);
+                    put_status(id, SSH_FX_FAILURE);
+                    return;
+                }
                 sprintf(sz_fullname, "%s/%s", sz_fulldirname, sz_basename);
+                free(sz_fulldirname);
             }
-
-            free(sz_fulldirname);
-            free(sz_path_copy);
         }
         else
         {
