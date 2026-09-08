@@ -1039,6 +1039,12 @@ static void sftp_realpath(void)
             free(sz_fulldirname);
             free(sz_path_copy);
         }
+        else
+        {
+            /* Handle realpath failing with something other than ENOENT */
+            put_status(id, errno_to_sftp(errno));
+            return;
+        }
     }
 
     put_byte(SSH_FXP_NAME);
