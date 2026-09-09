@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2014-2016, Edward Langley
+Copyright (c) 2014-2026, Edward Langley
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -133,6 +133,17 @@ MAX_HANDLES in that many digits */
 #define STREXPAND(x) STR(x)
 #define elemof(x) ( sizeof(x) / sizeof( (x)[0] ) )
 
+/* REQUIRE is used instead of assert() for conditions that depend on data
+supplied by the remote peer (protocol fields, packet lengths, buffer bounds
+derived from packet contents) rather than being a pure internal invariant.
+Unlike assert(), it can never be compiled out by NDEBUG - these checks are
+the only thing standing between a malformed/hostile packet and out-of-bounds
+access to the fixed-size packet buffers, so they must always run. Genuine
+internal invariants (e.g. checking our own allocator's output, or a
+just-completed local read()'s return value against a locally computed bound)
+should still use assert() as before. */
+#define REQUIRE(cond, msg) do { if (!(cond)) protocol_error(msg); } while (0)
+
 /* Basic boolean type */
 typedef enum
 {
@@ -211,14 +222,19 @@ static void sftp_symlink(void);
 
 static void read_input(uint32_t len);
 
+/* Fatal, unconditional rejection of a malformed/hostile packet - see REQUIRE above */
+static void protocol_error(const char *msg);
+
 /* Buffer pointer save/swap - see typedef comments */
 static void buff_save(buff_save_t *p_buff);
 static void buff_swap(buff_save_t *p_buff);
 
 /* Various buffer read/write functions. get_* obtains information from (and consumes)
 the input buffer, put_* writes to (and consumes space in) the output buffer. It is
-always assert()ed that the data to be put_* doesn't overflow the output buffer; cases
-where this may occur are very rare by design (e.g. filenames >17k long) */
+always REQUIRE()d (see above) that the data to be got/put doesn't over/underflow the
+input/output buffer; cases where this may occur are very rare by design (e.g.
+filenames >17k long) but are attacker-influenced, so are checked unconditionally
+rather than via assert() */
 static void put_status(uint32_t id, uint32_t status);
 static void put_handle(uint32_t id, unsigned long handle);
 static uint8_t get_byte(void);
@@ -268,7 +284,7 @@ int main(int argc, char **argv)
 
         /* Read the payload into the beginning of the packet buffer overwriting
         length */
-        assert(payload_len <= sizeof(ibuff.data));
+        REQUIRE(payload_len <= sizeof(ibuff.data), "payload length exceeds packet buffer");
 
         /* Read the rest of the packet */
         read_input(payload_len);
@@ -325,6 +341,14 @@ int main(int argc, char **argv)
     }
 }
 
+/* Reject a malformed/hostile packet unconditionally - see REQUIRE above.
+Deliberately not assert()-based: this must still run when built with NDEBUG */
+static void protocol_error(const char *msg)
+{
+    fprintf(stderr, "Protocol error: %s\n", msg);
+    exit(EXIT_FAILURE);
+}
+
 static void read_input(uint32_t len)
 {
     ssize_t temp;
@@ -373,7 +397,7 @@ static void sftp_in(void)
     /* INIT must be the first packet */
     if (!have_init)
     {
-        assert(opcode == SSH_FXP_INIT);
+        REQUIRE(opcode == SSH_FXP_INIT, "first packet was not INIT");
         sftp_init();
         have_init = SSH_TRUE;
         return;
@@ -470,7 +494,7 @@ static void sftp_init(void)
     uint32_t version = get_uint32();
 
     /* For now we'll be version 3 */
-    assert(version >= SFTP_PROTOCOL_VERSION);
+    REQUIRE(version >= SFTP_PROTOCOL_VERSION, "client version too new");
 
     /* Reply with our version */
     put_byte(SSH_FXP_VERSION);
@@ -1262,7 +1286,7 @@ static uint8_t get_byte(void)
     uint8_t data;
 
     /* Check we're safe */
-    assert(ibuff.count > 0);
+    REQUIRE(ibuff.count > 0, "read past end of input packet");
     data = *ibuff.p_data;
 
     /* Adjust pointers */
@@ -1274,7 +1298,7 @@ static uint8_t get_byte(void)
 
 static void put_byte(uint8_t data)
 {
-    assert(obuff.count > 0);
+    REQUIRE(obuff.count > 0, "write past end of output packet");
 
     *obuff.p_data = data;
 
@@ -1304,7 +1328,7 @@ static uint32_t get_uint32(void)
     uint32_t data;
 
     /* Check we're safe */
-    assert(ibuff.count >= 4);
+    REQUIRE(ibuff.count >= 4, "read past end of input packet");
 
     /* Obtain uint32_t in network byte order (big-endian) */
     data = (((uint32_t)ibuff.p_data[0]) << 24) |
@@ -1331,7 +1355,7 @@ static uint64_t get_uint64(void)
 static void put_uint32(uint32_t data)
 {
     /* Check for space */
-    assert(obuff.count >= 4);
+    REQUIRE(obuff.count >= 4, "write past end of output packet");
 
     /* Write in network byte order (big-endian) */
     obuff.p_data[0] = (uint8_t)(data >> 24);
@@ -1379,7 +1403,7 @@ static const char *get_string(uint32_t *p_sz_len)
 
     /* Obtain length of string and check it is inside the packet*/
     len_bytes = get_uint32();
-    assert(len_bytes <= ibuff.count);
+    REQUIRE(len_bytes <= ibuff.count, "string length exceeds input packet");
 
     /* Move the string earlier in memory by 4 bytes and append null terminator */
     memmove(p_sz, ibuff.p_data, len_bytes);
@@ -1406,7 +1430,7 @@ static const uint8_t *get_data(uint32_t *p_len)
 {
     const uint8_t *p_data;
     uint32_t len_bytes = get_uint32();
-    assert(len_bytes <= ibuff.count);
+    REQUIRE(len_bytes <= ibuff.count, "data length exceeds input packet");
 
     p_data = ibuff.p_data;
     if (p_len)
@@ -1427,7 +1451,7 @@ static void put_cstring(const char *sz_str)
     size_t len = strlen(sz_str);
 
     put_uint32(len);
-    assert(len  <= obuff.count);
+    REQUIRE(len <= obuff.count, "string write exceeds output packet");
     memcpy(obuff.p_data, sz_str, len);
 
     obuff.count -= len;
