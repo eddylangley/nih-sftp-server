@@ -123,10 +123,12 @@ _BSD_SOURCE for futimes; otherwise sftp_fsetstat() will return unsupported
 /* Implementation limits */
 #define MAX_PACKET 34000    /* SFTP: All servers SHOULD support packets of at least 34000 bytes */
 #define PERM_MASK 0777
-/* Handles are represented as SSH strings; MAX_HANDLE_DIGITS must enable the printing of
-MAX_HANDLES in that many digits */
-#define MAX_HANDLES 99
+/* Handles are represented as SSH strings, formatted as fixed-width hex. MAX_HANDLES is
+derived from MAX_HANDLE_DIGITS (rather than defined independently) so the two can never
+drift out of sync - the largest handle value is always exactly representable in
+MAX_HANDLE_DIGITS hex digits by construction */
 #define MAX_HANDLE_DIGITS 2
+#define MAX_HANDLES ((1UL << (4 * MAX_HANDLE_DIGITS)) - 1)
 
 /* Utility macros */
 #define STR(x) #x
@@ -1217,7 +1219,7 @@ static void put_handle(uint32_t id, unsigned long handle)
 
     put_byte(SSH_FXP_HANDLE);
     put_uint32(id);
-    sprintf(buff,"%0" STREXPAND(MAX_HANDLE_DIGITS) "lu", handle);
+    sprintf(buff,"%0" STREXPAND(MAX_HANDLE_DIGITS) "lX", handle);
     put_cstring(buff);
 }
 
@@ -1236,7 +1238,7 @@ static fxp_handle_t *get_handle(void)
     {
         return NULL;
     }
-    handle = strtoul(sz_handle, &ep, 10);
+    handle = strtoul(sz_handle, &ep, 16);
     if (*ep != '\0')
     {
         /* Didn't convert all characters */
