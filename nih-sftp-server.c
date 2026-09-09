@@ -44,6 +44,25 @@ _BSD_SOURCE for futimes; otherwise sftp_fsetstat() will return unsupported
 #define _BSD_SOURCE
 /* GCC folks may prefer to #define _DEFAULT_SOURCE but this is not obviously POSIX compliant */
 
+/* Define OPENSSH_COMPAT to match OpenSSH's sftp-server in the small number of
+places where it deviates from the literal SFTPv3 draft. OpenSSH is the de
+facto reference implementation that essentially every real-world SFTP client
+is built and tested against, so matching it (rather than the draft) is what
+makes this server actually interoperate. Currently this affects:
+  - SSH_FXP_SYMLINK argument order: OpenSSH sends/expects targetpath before
+    linkpath; the draft specifies the opposite (see OpenSSH's PROTOCOL file,
+    "3.1. sftp: Reversal of arguments to SSH_FXP_SYMLINK")
+  - SSH_FXP_REALPATH on a path whose basename does not exist yet: OpenSSH
+    resolves as far as it can and reports the unresolved remainder appended,
+    rather than failing the whole request outright
+On by default. To follow the SFTPv3 draft literally instead, either edit the
+value below, or leave the source alone and pass -DOPENSSH_COMPAT=0 on the
+compiler command line (plain -UOPENSSH_COMPAT has no effect here, since it
+would just leave the macro undefined for the #ifndef below to redefine). */
+#ifndef OPENSSH_COMPAT
+#define OPENSSH_COMPAT 1
+#endif
+
 /* C library */
 #include <stdint.h> /* uint32_t */
 #include <stdlib.h> /* exit() */
@@ -520,7 +539,7 @@ static void sftp_open(void)
     pflags = get_uint32();
     get_attrs(&attrs);
     flags = pflags_to_unix(pflags);
-    mode = attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS ? attrs.permissions : DEFAULT_FILE_PERM;
+    mode = attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS ? (attrs.permissions & PERM_MASK) : DEFAULT_FILE_PERM;
 
     /* Open file */
     fd = open(sz_filename, flags, mode);
@@ -799,7 +818,7 @@ static void sftp_fsetstat(void)
     {
         if (attr.flags & SSH_FILEXFER_ATTR_PERMISSIONS)
         {
-            if (fchmod(p_handle->fd, attr.permissions & 0777) < 0)
+            if (fchmod(p_handle->fd, attr.permissions & PERM_MASK) < 0)
             {
                 put_status(id, errno_to_sftp(errno));
                 return;
@@ -1014,6 +1033,7 @@ static void sftp_realpath(void)
 
     if (!sz_fullname)
     {
+#if OPENSSH_COMPAT
         if (errno == ENOENT)
         {
             /* Handle paths whose basename does not exist yet */
@@ -1074,8 +1094,10 @@ static void sftp_realpath(void)
             }
         }
         else
+#endif
         {
-            /* Handle realpath failing with something other than ENOENT */
+            /* Handle realpath failing with something other than ENOENT (or,
+            without OPENSSH_COMPAT, any failure at all) */
             put_status(id, errno_to_sftp(errno));
             return;
         }
@@ -1152,10 +1174,17 @@ static void sftp_readlink(void)
 static void sftp_symlink(void)
 {
     uint32_t id = get_uint32();
+#if OPENSSH_COMPAT
+    /* OpenSSH order - see OPENSSH_COMPAT comment above */
+    const char *sz_target_path = get_string(NULL);
+    const char *sz_link_path = get_string(NULL);
+#else
+    /* Order as literally specified in the SFTPv3 draft */
     const char *sz_link_path = get_string(NULL);
     const char *sz_target_path = get_string(NULL);
+#endif
 
-    if (symlink(sz_target_path, sz_link_path) == -1) /* !!! TODO Other implementations have these the other way around */
+    if (symlink(sz_target_path, sz_link_path) == -1)
     {
         put_status(id, errno_to_sftp(errno));
     }
