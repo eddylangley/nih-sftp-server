@@ -494,7 +494,7 @@ static void sftp_init(void)
     uint32_t version = get_uint32();
 
     /* For now we'll be version 3 */
-    REQUIRE(version >= SFTP_PROTOCOL_VERSION, "client version too new");
+    REQUIRE(version >= SFTP_PROTOCOL_VERSION, "client version too old");
 
     /* Reply with our version */
     put_byte(SSH_FXP_VERSION);
