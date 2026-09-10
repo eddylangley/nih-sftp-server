@@ -1,0 +1,41 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          gcc --version
+          python3 --version
+
+      - name: Run test suite (builds normal / ASan / NDEBUG+ASan / draft-spec variants)
+        run: python3 tests/run_all.py -v
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gcc -fanalyzer
+        run: |
+          gcc -fanalyzer -Wall -Wextra -std=iso9899:1999 -c nih-sftp-server.c -o /tmp/analyzer.o
+
+  strict-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        openssh_compat: ["", "-DOPENSSH_COMPAT=0"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with project's own strict flags
+        run: |
+          gcc -O2 -Wall -Wextra -std=iso9899:1999 -pedantic-errors \
+            ${{ matrix.openssh_compat }} nih-sftp-server.c -o /tmp/sftp-server
