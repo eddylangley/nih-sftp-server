@@ -882,6 +882,12 @@ static void sftp_opendir(void)
                 put_handle(id, handle);
                 return;
             }
+            else
+            {
+                /* Out of handles. closedir() also closes the underlying fd -
+                mirrors sftp_open()'s close(fd) on the same condition. */
+                closedir(p_dir);
+            }
         }
     }
     put_status(id, status);
@@ -937,6 +943,7 @@ static void sftp_readdir(void)
                 /* We couldn't write the name to the buffer and it's not the only 
                 name in the buffer - rewind the dir pointer and leave it to next time */
                 seekdir(p_handle->p_dir, dir_posn);
+                break;
             }
             /* else - we skip entries too long to ever report! This seems more helpful than
             returning an error and refusing to read anything. */
