@@ -82,6 +82,31 @@ def draft_spec_asan():
     )
 
 
+@functools.lru_cache(maxsize=None)
+def coverage():
+    """Default-config build instrumented for gcov coverage measurement.
+
+    Deliberately not combined with ASan/NDEBUG: NDEBUG would compile away
+    the two genuinely-internal assert()s (see nih-sftp-server.c's REQUIRE
+    comment) so they'd never show up as coverage-able lines at all, and
+    combining with a sanitizer adds noise we don't need here - coverage
+    just wants to know which lines executed.
+    """
+    return _compile("sftp-server-coverage", ["-O0", "-g", "--coverage"])
+
+
+@functools.lru_cache(maxsize=None)
+def coverage_draft():
+    """OPENSSH_COMPAT=0 build instrumented for gcov coverage measurement.
+
+    A separate binary is required to get coverage of the #else branches in
+    sftp_realpath/sftp_symlink at all - they're compiled out entirely of
+    the default coverage() binary, the same way any #ifdef'd-out code is
+    invisible to gcov.
+    """
+    return _compile("sftp-server-coverage-draft", ["-O0", "-g", "--coverage", "-DOPENSSH_COMPAT=0"])
+
+
 ALL_VARIANTS = (normal, asan, ndebug_asan, draft_spec_asan)
 
 

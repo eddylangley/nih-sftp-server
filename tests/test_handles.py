@@ -53,6 +53,57 @@ class HandleRoundTripTest(SFTPTestCase):
 
 
 @require_working_asan
+class HandleExhaustionTest(SFTPTestCase):
+    """Exercises handle_alloc_file()'s "out of handles" branch, which had
+    no coverage before this file - every earlier test only ever opened one
+    or two handles at a time in a session.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.binary = build.asan()
+
+    def test_opening_more_than_max_handles_fails_cleanly(self):
+        self.write_file("shared.txt", b"x")
+        session = self.session(self.binary)
+
+        # Open the same file repeatedly, well past any plausible
+        # MAX_HANDLES, in one session - and confirm allocation starts
+        # failing cleanly (no handle, no crash) once the table is full,
+        # every handle actually issued was unique, and it stays failed
+        # for every attempt afterward (nothing spuriously frees a slot).
+        attempts = 300
+        packets = []
+        for i in range(attempts):
+            pkt = struct.pack(">B", wire.SSH_FXP_OPEN) + struct.pack(">I", i + 1) \
+                + wire.sstr("shared.txt") + struct.pack(">I", wire.SSH_FXF_READ) + struct.pack(">I", 0)
+            packets.append(wire.pkt(pkt))
+
+        result = session.run(packets)
+        self.assertFalse(result.crashed, result.stderr_text())
+        # responses[0] is INIT's VERSION reply; one response per OPEN follows.
+        self.assertEqual(len(result.responses), attempts + 1)
+
+        handles_seen = []
+        first_failure_at = None
+        for i, resp in enumerate(result.responses[1:]):
+            if resp[0] == wire.SSH_FXP_HANDLE:
+                handles_seen.append(wire.handle_of(resp))
+            else:
+                self.assertEqual(wire.status_of(resp), wire.SSH_FX_FAILURE,
+                                  f"attempt {i}: expected FAILURE once out of handles")
+                if first_failure_at is None:
+                    first_failure_at = i
+
+        self.assertIsNotNone(first_failure_at, f"expected to exhaust the handle table within {attempts} opens")
+        self.assertEqual(len(handles_seen), len(set(handles_seen)), "every issued handle should be unique")
+        self.assertGreater(len(handles_seen), 0)
+        # Tied to the current MAX_HANDLE_DIGITS=2 default (MAX_HANDLES=255) -
+        # update this if that constant changes.
+        self.assertEqual(len(handles_seen), 255)
+
+
+@require_working_asan
 class MalformedHandleTest(SFTPTestCase):
     """A CLOSE request with a malformed handle string must be rejected
     cleanly (SSH_FX_FAILURE) rather than crash, for every kind of

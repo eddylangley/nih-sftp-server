@@ -117,6 +117,44 @@ def name_path_of(resp: bytes):
     return None
 
 
+def parse_name_response(resp: bytes):
+    """Parse a (possibly multi-entry) SSH_FXP_NAME response, e.g. from
+    SSH_FXP_READDIR, into a list of (filename, longname, attrs_bytes)
+    tuples. attrs_bytes is left undecoded, since its layout depends on
+    which flag bits are set (callers who know which handler produced the
+    response - e.g. stat_to_attr always sets SIZE|UIDGID|PERMISSIONS|
+    ACMODTIME - can decode it themselves).
+    """
+    assert resp and resp[0] == SSH_FXP_NAME
+    count = struct.unpack(">I", resp[5:9])[0]
+    offset = 9
+    entries = []
+    for _ in range(count):
+        nlen = struct.unpack(">I", resp[offset:offset + 4])[0]
+        offset += 4
+        filename = resp[offset:offset + nlen]
+        offset += nlen
+
+        llen = struct.unpack(">I", resp[offset:offset + 4])[0]
+        offset += 4
+        longname = resp[offset:offset + llen]
+        offset += llen
+
+        attrs_start = offset
+        flags = struct.unpack(">I", resp[offset:offset + 4])[0]
+        offset += 4
+        if flags & SSH_FILEXFER_ATTR_SIZE:
+            offset += 8
+        if flags & SSH_FILEXFER_ATTR_UIDGID:
+            offset += 8
+        if flags & SSH_FILEXFER_ATTR_PERMISSIONS:
+            offset += 4
+        if flags & SSH_FILEXFER_ATTR_ACMODTIME:
+            offset += 8
+        entries.append((filename, longname, resp[attrs_start:offset]))
+    return entries
+
+
 class SessionResult:
     def __init__(self, returncode, stdout, stderr, timed_out):
         self.returncode = returncode

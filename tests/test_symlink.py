@@ -45,6 +45,17 @@ class SymlinkOpenSSHCompatTest(SFTPTestCase):
         self.assertTrue(link_path.is_symlink())
         self.assertEqual(link_path.readlink().name, "target.txt")
 
+    def test_symlink_fails_when_link_path_already_exists(self):
+        """Exercises sftp_symlink()'s errno_to_sftp() failure path, which
+        isn't reachable via the success-only test above.
+        """
+        self.write_file("target.txt", b"hello")
+        self.write_file("mylink")  # already exists as a regular file
+        packet = _symlink_request(1, "target.txt", "mylink")
+        result = self.session(self.binary).run([packet])
+        self.assertFalse(result.crashed, result.stderr_text())
+        self.assertEqual(wire.status_of(result.responses[1]), wire.SSH_FX_FAILURE)
+
 
 @require_working_asan
 class SymlinkDraftSpecTest(SFTPTestCase):

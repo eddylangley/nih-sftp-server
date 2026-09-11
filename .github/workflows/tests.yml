@@ -39,3 +39,14 @@ jobs:
         run: |
           gcc -O2 -Wall -Wextra -std=iso9899:1999 -pedantic-errors \
             ${{ matrix.openssh_compat }} nih-sftp-server.c -o /tmp/sftp-server
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runs as the non-root "runner" user by default on GitHub-hosted
+      # runners, so the EACCES/EPERM-dependent tests (skipped under root -
+      # see testutil.skip_if_root) run for real here, not just the rest.
+      - name: Measure coverage (gcov)
+        run: python3 tests/run_coverage.py

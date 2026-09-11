@@ -35,6 +35,17 @@ class RealpathOpenSSHCompatTest(SFTPTestCase):
         self.assertEqual(resp[0], wire.SSH_FXP_NAME)
         self.assertEqual(wire.name_path_of(resp), str(self.cwd).encode())
 
+    def test_empty_path_resolves_as_dot(self):
+        """Exercises sftp_realpath()'s explicit empty-path fallback
+        (path_len == 0 -> use "." instead), which isn't reachable via any
+        of the non-empty-path tests elsewhere in this file.
+        """
+        result = self._realpath("")
+        self.assertFalse(result.crashed, result.stderr_text())
+        resp = result.responses[1]
+        self.assertEqual(resp[0], wire.SSH_FXP_NAME)
+        self.assertEqual(wire.name_path_of(resp), str(self.cwd).encode())
+
     def test_nonexistent_basename_with_existing_parent_resolves(self):
         """The core OpenSSH-compat feature: a not-yet-created target (e.g.
         the destination of `scp -r`) should resolve rather than fail.

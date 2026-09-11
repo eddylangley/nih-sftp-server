@@ -1,4 +1,5 @@
 """Shared test-case base class for the nih-sftp-server test suite."""
+import os
 import pathlib
 import sys
 import tempfile
@@ -8,6 +9,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import build  # noqa: E402  (import after sys.path bootstrap above)
 import sftp_wire as wire  # noqa: E402
+
+
+def running_as_root() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+skip_if_root = unittest.skipIf(
+    running_as_root(),
+    "running as root - DAC permission checks (EACCES/EPERM) are bypassed",
+)
 
 
 class SFTPTestCase(unittest.TestCase):
