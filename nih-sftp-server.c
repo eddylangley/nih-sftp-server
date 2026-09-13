@@ -32,17 +32,15 @@ This code originates from http://www.eddylangley.net/nih/sftp/
 
 gcc -O2 -Wall -Wextra -Werror -std=iso9899:1999 -pedantic-errors nih-sftp-server.c -o sftp-server
 
-If not then see "man 7 feature_test_macros". The relevant features are:
-
-_XOPEN_SOURCE for POSIX telldir, seekdir
-_XOPEN_SOURCE >=500 for POSIX lstat, telldir, seekdir, readlink, symlink
-_XOPEN_SOURCE >=700 for POSIX.1-2008 + XSI fstatat fdopendir; without this 
-realpath() is broken and sftp_realpath will return unsupported 
-_BSD_SOURCE for futimes; otherwise sftp_fsetstat() will return unsupported
+If not then see "man 7 feature_test_macros". This code tries to be POSIX compliant
+which means doign the following on Linux/gcc:
 */
-#define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
-/* GCC folks may prefer to #define _DEFAULT_SOURCE but this is not obviously POSIX compliant */
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 
 /* Define OPENSSH_COMPAT to match OpenSSH's sftp-server in the small number of
 places where it deviates from the literal SFTPv3 draft. OpenSSH is the de
