@@ -44,7 +44,6 @@ top of the file:
 | Macro | Needed for |
 |---|---|
 | `_XOPEN_SOURCE 700` | `telldir`/`seekdir`, `lstat`, `readlink`/`symlink`, `fstatat`/`fdopendir` |
-| `_BSD_SOURCE` (or `_DEFAULT_SOURCE`) | `futimes` — without it, `SSH_FXP_FSETSTAT` degrades gracefully to `SSH_FX_OP_UNSUPPORTED` |
 
 See `man 7 feature_test_macros` if you need to adjust these for your
 platform.
