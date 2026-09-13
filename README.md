@@ -124,15 +124,7 @@ rather not post publicly first, contact the maintainer directly).
 
 ## Testing
 
-There's no bundled test suite yet, but the server's design — reading a
-fixed protocol from stdin and writing a fixed protocol to stdout, no
-sockets or global state beyond the handle table — makes it straightforward
-to test by piping crafted SFTP packets to the binary and inspecting the
-response. Building with `-fsanitize=address,undefined` (and, if you want
-to specifically check that `REQUIRE()` checks survive release builds,
-`-DNDEBUG -fsanitize=address`) is a good way to catch memory-safety
-regressions.
-
+See [tests](tests/)
 ## License
 
 BSD 3-Clause. See the license header at the top of `nih-sftp-server.c`.
