@@ -896,7 +896,7 @@ static void sftp_readdir(void)
     uint32_t id = get_uint32();
     fxp_handle_t *p_handle = get_handle();
 
-    if (!p_handle)
+    if (!p_handle || (p_handle->use != HANDLE_DIR))
     {
         put_status(id, SSH_FX_FAILURE);
         return;
