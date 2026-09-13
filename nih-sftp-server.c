@@ -32,13 +32,17 @@ This code originates from http://www.eddylangley.net/nih/sftp/
 
 gcc -O2 -Wall -Wextra -Werror -std=iso9899:1999 -pedantic-errors nih-sftp-server.c -o sftp-server
 
-If not then see "man 7 feature_test_macros". The relevant features are:
-
-_XOPEN_SOURCE for POSIX telldir, seekdir
-_XOPEN_SOURCE >=500 for POSIX lstat, telldir, seekdir, readlink, symlink
-_XOPEN_SOURCE >=700 for POSIX.1-2008 + XSI fstatat fdopendir
+If not then see "man 7 feature_test_macros". This code aims for strict POSIX
+compliance: _XOPEN_SOURCE 700 requests conformance to The Open Group Base
+Specifications Issue 7 (SUSv4), which is POSIX.1-2008 plus the XSI extension
+this code relies on (telldir/seekdir, fstatat/fdopendir, futimens/utimensat).
+Unlike glibc's _DEFAULT_SOURCE, this is a real standard rather than a
+glibc-specific "give me the usual extras" macro, and should be honored by
+any XPG7/SUSv4-conforming libc, not just glibc.
 */
+#ifndef _XOPEN_SOURCE
 #define _XOPEN_SOURCE 700
+#endif
 /* The above defines _POSIX_C_SOURCE 200809L */
 
 /* Define OPENSSH_COMPAT to match OpenSSH's sftp-server in the small number of
