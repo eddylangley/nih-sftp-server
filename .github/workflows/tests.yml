@@ -50,3 +50,33 @@ jobs:
       # see testutil.skip_if_root) run for real here, not just the rest.
       - name: Measure coverage (gcov)
         run: python3 tests/run_coverage.py
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Build fuzz harness
+        run: |
+          clang -O1 -g -fsanitize=fuzzer,address,undefined \
+            -std=gnu99 fuzz/fuzz_harness.c -o fuzz/fuzz_harness
+
+      # See fuzz/README.md: this harness drives a real filesystem-touching
+      # server, so it always runs from an empty scratch directory, never
+      # the checkout itself.
+      - name: Run fuzzer (bounded time - see fuzz/README.md for longer runs)
+        run: |
+          mkdir -p /tmp/nih-sftp-fuzz && cd /tmp/nih-sftp-fuzz
+          "$GITHUB_WORKSPACE/fuzz/fuzz_harness" "$GITHUB_WORKSPACE/fuzz/corpus" \
+            -max_len=34100 -timeout=5 -max_total_time=120
+
+      - name: Upload any crash/hang artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: /tmp/nih-sftp-fuzz/crash-*
+          if-no-files-found: ignore

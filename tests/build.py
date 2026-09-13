@@ -107,6 +107,17 @@ def coverage_draft():
     return _compile("sftp-server-coverage-draft", ["-O0", "-g", "--coverage", "-DOPENSSH_COMPAT=0"])
 
 
+@functools.lru_cache(maxsize=None)
+def coverage_asan():
+    """Default-config build instrumented for BOTH gcov coverage feedback
+    AND AddressSanitizer/UBSan, for use as the target of a coverage-guided
+    mutation fuzzer (see fuzz/local_coverage_fuzzer.py) - unlike
+    coverage(), this one needs to actually catch memory-safety bugs, not
+    just report which lines ran.
+    """
+    return _compile("sftp-server-coverage-asan", ["-O0", "-g", "--coverage", "-fsanitize=address,undefined"])
+
+
 ALL_VARIANTS = (normal, asan, ndebug_asan, draft_spec_asan)
 
 
