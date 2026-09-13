@@ -32,15 +32,14 @@ This code originates from http://www.eddylangley.net/nih/sftp/
 
 gcc -O2 -Wall -Wextra -Werror -std=iso9899:1999 -pedantic-errors nih-sftp-server.c -o sftp-server
 
-If not then see "man 7 feature_test_macros". This code tries to be POSIX compliant
-which means doign the following on Linux/gcc:
+If not then see "man 7 feature_test_macros". The relevant features are:
+
+_XOPEN_SOURCE for POSIX telldir, seekdir
+_XOPEN_SOURCE >=500 for POSIX lstat, telldir, seekdir, readlink, symlink
+_XOPEN_SOURCE >=700 for POSIX.1-2008 + XSI fstatat fdopendir
 */
-#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
-#define _DEFAULT_SOURCE 1
-#endif
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-#endif
+#define _XOPEN_SOURCE 700
+/* The above defines _POSIX_C_SOURCE 200809L */
 
 /* Define OPENSSH_COMPAT to match OpenSSH's sftp-server in the small number of
 places where it deviates from the literal SFTPv3 draft. OpenSSH is the de
@@ -71,9 +70,11 @@ would just leave the macro undefined for the #ifndef below to redefine). */
 
 /* POSIX and friends */
 #include <unistd.h> /* Many things */
-#include <fcntl.h>  /* O_RDONLY etc */
-#include <sys/time.h> /* utimes, futimes */
-#include <sys/stat.h> /* f/l/stat/at, chmod */
+#include <fcntl.h>  /* O_RDONLY, AT_FDCWD etc */
+#include <time.h> /* struct timespec */
+#include <sys/select.h> /* select, fd_set - the POSIX-specified home for these,
+rather than relying on sys/time.h to provide them transitively as some libcs do */
+#include <sys/stat.h> /* f/l/stat/at, chmod, futimens, utimensat */
 #include <dirent.h> /* DIR*, readdir and friends */
 #include <libgen.h> /* dirname, basename */
 
@@ -270,7 +271,7 @@ static fxp_handle_t *get_handle(void);
 
 static void get_attrs(attrs_t *p_attrs);
 static void put_attrs(attrs_t *p_attrs);
-static void attrs_to_tv(attrs_t *p_attr, struct timeval tv[2]);
+static void attrs_to_timespec(attrs_t *p_attr, struct timespec ts[2]);
 
 /* Portability and POSIX <-> SFTP conversion */
 static int pflags_to_unix(uint32_t pflags);
@@ -783,10 +784,10 @@ static void sftp_setstat(void)
     }
     if (attr.flags & SSH_FILEXFER_ATTR_ACMODTIME)
     {
-        struct timeval tv[2];
+        struct timespec ts[2];
 
-        attrs_to_tv(&attr, tv);
-        if (utimes(sz_path, tv) < 0)
+        attrs_to_timespec(&attr, ts);
+        if (utimensat(AT_FDCWD, sz_path, ts, 0) < 0)
         {
             put_status(id, errno_to_sftp(errno));
             return;
@@ -805,7 +806,6 @@ static void sftp_setstat(void)
 
 static void sftp_fsetstat(void)
 {
-#ifdef _BSD_SOURCE
     uint32_t id = get_uint32();
     fxp_handle_t *p_handle = get_handle();
     uint32_t status = SSH_FX_FAILURE;
@@ -824,9 +824,9 @@ static void sftp_fsetstat(void)
         }
         if (attr.flags & SSH_FILEXFER_ATTR_ACMODTIME)
         {
-            struct timeval tv[2];
-            attrs_to_tv(&attr, tv);
-            if (futimes(p_handle->fd, tv) < 0)
+            struct timespec ts[2];
+            attrs_to_timespec(&attr, ts);
+            if (futimens(p_handle->fd, ts) < 0)
             {
                 put_status(id, errno_to_sftp(errno));
                 return;
@@ -843,9 +843,6 @@ static void sftp_fsetstat(void)
         status = SSH_FX_OK;
     }
     put_status(id, status);
-#else
-    put_status(get_uint32(), SSH_FX_OP_UNSUPPORTED);    
-#endif
 }
 
 static void sftp_opendir(void)
@@ -1020,7 +1017,6 @@ static void sftp_rmdir(void)
 
 static void sftp_realpath(void)
 {
-#if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200809L
     uint32_t id = get_uint32();
     uint32_t path_len;
     const char *sz_path = get_string(&path_len);
@@ -1116,9 +1112,6 @@ static void sftp_realpath(void)
     free(sz_fullname);  /* Storage is malloc'd by C library or OS */
     memset(&attr, 0, sizeof(attr));
     put_attrs(&attr);/* dummy attributes - why does SFTP specify this? Why not real attributes?*/
-#else
-    put_status(get_uint32(), SSH_FX_OP_UNSUPPORTED);    
-#endif
 }
 
 static void sftp_rename(void)
@@ -1558,12 +1551,12 @@ static void put_attrs(attrs_t *p_attrs)
     }
 }
 
-static void attrs_to_tv(attrs_t *p_attr, struct timeval tv[2])
+static void attrs_to_timespec(attrs_t *p_attr, struct timespec ts[2])
 {
-    tv[0].tv_sec = p_attr->atime;
-    tv[0].tv_usec = 0;
-    tv[1].tv_sec = p_attr->mtime;
-    tv[1].tv_usec = 0;
+    ts[0].tv_sec = p_attr->atime;
+    ts[0].tv_nsec = 0;
+    ts[1].tv_sec = p_attr->mtime;
+    ts[1].tv_nsec = 0;
 }
 
 /* Map portable flags to unix flags */

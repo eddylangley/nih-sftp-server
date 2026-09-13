@@ -124,7 +124,7 @@ rather not post publicly first, contact the maintainer directly).
 
 ## Testing
 
-See [tests](tests/)
+See [tests](tests/README.md)
 ## License
 
 BSD 3-Clause. See the license header at the top of `nih-sftp-server.c`.

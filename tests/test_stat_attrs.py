@@ -219,6 +219,34 @@ class FsetstatTest(SFTPTestCase):
         mode = stat.S_IMODE(os.stat(self.cwd / "f.txt").st_mode)
         self.assertEqual(mode, 0o640)
 
+    def test_fsetstat_acmodtime_on_open_handle(self):
+        """Exercises sftp_fsetstat()'s ACMODTIME branch (futimens()) -
+        distinct from the permissions-only test above, which never
+        touched this specific line.
+        """
+        self.write_file("f.txt")
+        session = self.session(self.binary)
+        open_pkt = struct.pack(">B", wire.SSH_FXP_OPEN) + struct.pack(">I", 1) \
+            + wire.sstr("f.txt") + struct.pack(">I", wire.SSH_FXF_WRITE | wire.SSH_FXF_CREAT) \
+            + struct.pack(">I", 0)
+
+        probe = session.run([wire.pkt(open_pkt)])
+        handle = wire.handle_of(probe.responses[1])
+        self.assertIsNotNone(handle)
+
+        atime, mtime = 1_000_000_000, 1_100_000_000
+        attrs = struct.pack(">I", wire.SSH_FILEXFER_ATTR_ACMODTIME) \
+            + struct.pack(">I", atime) + struct.pack(">I", mtime)
+        fsetstat_pkt = struct.pack(">B", wire.SSH_FXP_FSETSTAT) + struct.pack(">I", 2) \
+            + wire.sstr(handle) + attrs
+
+        result = session.run([wire.pkt(open_pkt), wire.pkt(fsetstat_pkt)])
+        self.assertFalse(result.crashed, result.stderr_text())
+        self.assertEqual(wire.status_of(result.responses[2]), wire.SSH_FX_OK)
+        st = os.stat(self.cwd / "f.txt")
+        self.assertEqual(int(st.st_atime), atime)
+        self.assertEqual(int(st.st_mtime), mtime)
+
     def test_fsetstat_on_invalid_handle_fails(self):
         attrs = struct.pack(">I", wire.SSH_FILEXFER_ATTR_PERMISSIONS) + struct.pack(">I", 0o640)
         payload = struct.pack(">B", wire.SSH_FXP_FSETSTAT) + struct.pack(">I", 1) + wire.sstr(b"FF") + attrs
