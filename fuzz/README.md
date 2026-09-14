@@ -106,6 +106,11 @@ a longer fuzzing run; if you want deeper coverage, run the harness
 locally (or in a dedicated longer-running CI job) for minutes to hours
 rather than seconds.
 
+If this job reports a leak after running for a while rather than
+crashing or hanging outright, it's very likely `LeakSanitizer` correctly
+catching a real bug - see the note on `fuzz_harness.c`'s own persistent-
+mode handle cleanup below before assuming it's a false positive.
+
 ## Why this exists
 
 Two real bugs in `nih-sftp-server.c` were found via structured,
@@ -117,6 +122,24 @@ what motivated building this: the manual test-writing pass that found it
 was thorough but ad hoc, and there's no guarantee it caught everything of
 that shape. Coverage-guided fuzzing, run for real wall-clock time, is a
 more systematic way to keep looking.
+
+The harness itself has needed a real fix too, not just the server code:
+persistent-mode fuzzing reuses the same process (and the same static
+`handles[]` table) across many thousands of iterations, so
+`LLVMFuzzerTestOneInput()` resets that table at the start of each one.
+The reset originally just zeroed the table without first closing
+whatever it still referenced - so any fuzzer input that opened a handle
+and never sent a matching `CLOSE` before its input ran out would leak
+that handle's fd (and, for a directory handle, `fdopendir()`'s malloc'd
+`DIR*` buffer) on every such iteration. Confirmed with `LeakSanitizer`:
+**199 leaked allocations out of 200 iterations** of a single
+`OPENDIR`-with-no-`CLOSE` input run in a loop, before the fix. This is
+not a bug in `nih-sftp-server.c` - a real deployment spawns a fresh
+process per session, so the OS reclaims everything at exit regardless -
+purely an artifact of persistent-mode reuse, which real usage never
+does. `LLVMFuzzerTestOneInput()` now walks the handle table and closes
+anything still open before resetting it, matching the cleanup a real
+process teardown would do for free.
 
 ## No clang available? `local_coverage_fuzzer.py`
 

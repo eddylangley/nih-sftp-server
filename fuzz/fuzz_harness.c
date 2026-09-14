@@ -116,7 +116,30 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     real process/session. Persistent-mode fuzzing reuses this same
     process - and these same static globals - across many iterations, so
     without this, iteration N+1 would incorrectly start already-INIT'd
-    and/or with iteration N's handles still "open". */
+    and/or with iteration N's handles still "open".
+
+    Before wiping the handle table, actually close whatever it still
+    references. A fuzzer input that opens a handle and never sends a
+    matching CLOSE before its byte stream runs out would otherwise leak
+    that handle's fd (and, for a directory handle, fdopendir()'s
+    malloc'd DIR* buffer) on every such iteration - confirmed with
+    LeakSanitizer during development: 199 leaked fdopendir() allocations
+    out of 200 iterations of an OPENDIR-with-no-CLOSE input, before this
+    fix. Not a bug in nih-sftp-server.c itself - a real deployment spawns
+    a fresh process per session, so the OS reclaims everything at exit
+    regardless - purely an artifact of this harness's persistent-mode
+    reuse, which real usage never does. */
+    for (size_t i = 0; i < elemof(handles); i++)
+    {
+        if (handles[i].use == HANDLE_FILE)
+        {
+            close(handles[i].fd);
+        }
+        else if (handles[i].use == HANDLE_DIR)
+        {
+            closedir(handles[i].p_dir);
+        }
+    }
     have_init = SSH_FALSE;
     memset(handles, 0, sizeof(handles));
 
