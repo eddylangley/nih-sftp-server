@@ -4,3 +4,20 @@ crash-*
 timeout-*
 oom-*
 leak-*
+
+# Corpus growth discovered during local fuzzing is deliberately not
+# committed - see "Should the corpus be committed?" in fuzz/README.md.
+# libFuzzer names newly-discovered entries by content hash; this
+# allowlists only the known seed files generate_corpus.py produces, so a
+# stray `git add -A` after a local fuzzing session can't accidentally
+# check in a pile of hash-named growth. Add a new seed here (and to
+# generate_corpus.py) if you deliberately add one.
+corpus/*
+!corpus/malformed_length
+!corpus/open_write_close
+!corpus/opendir_readdir_close
+!corpus/realpath
+!corpus/rename_remove
+!corpus/setstat_mkdir_rmdir
+!corpus/stat_lstat_fstat
+!corpus/symlink_readlink

@@ -45,11 +45,25 @@ repo_root="$(pwd)"
 
 bwrap --unshare-all --share-net --die-with-parent \
     --ro-bind / / \
+    --bind "$repo_root/fuzz/corpus" "$repo_root/fuzz/corpus" \
     --tmpfs /tmp \
     --bind /tmp/nih-sftp-fuzz-scratch /tmp/scratch \
     --chdir /tmp/scratch \
     "$repo_root/fuzz/fuzz_harness" "$repo_root/fuzz/corpus" -max_len=34100 -timeout=5
 ```
+
+The extra `--bind "$repo_root/fuzz/corpus" "$repo_root/fuzz/corpus"`
+layers a read-write mount for just that one directory on top of the
+otherwise-read-only `/` (later `bwrap` binds override earlier ones for
+the same path) - everything else on the host stays read-only, but
+libFuzzer can now actually write newly-discovered, coverage-increasing
+inputs into the corpus directory as it finds them, the same way it would
+outside a sandbox. Without this, every run silently started fresh from
+the same static seed files and threw away anything discovered along the
+way.
+
+Deliberately not something this repo commits back to version control,
+though - see "Should the corpus be committed?" below.
 
 The paths to the harness binary and corpus **must** be absolute, not
 `fuzz/fuzz_harness fuzz/corpus` - `--chdir /tmp/scratch` changes the
@@ -107,13 +121,52 @@ clang -O1 -g -fsanitize=fuzzer,address,undefined \
 ```
 
 Then run it as shown above. Useful flags: `-jobs=N -workers=N` for
-parallel fuzzing; `-max_total_time=N` to bound a run to N seconds;
-`-artifact_prefix=/path/` to control where crash/hang reproducers land
-(as `crash-<hash>` / `timeout-<hash>` files inside the scratch
-directory). To replay one, run the same `bwrap` command as above but
-with the crash file's absolute host path appended as an extra argument
-after `$repo_root/fuzz/corpus` - same absolute-path requirement applies
-to it as to the harness binary and corpus.
+parallel fuzzing; `-max_total_time=N` to bound a run to N seconds.
+
+## Replaying a crash found locally
+
+A crash or hang found by a local run (not CI - see below for that)
+lands in the scratch directory, since nothing in the command above sets
+`-artifact_prefix` and libFuzzer defaults to the current directory,
+which `--chdir /tmp/scratch` has already pointed at the writable
+scratch bind:
+
+```sh
+ls /tmp/nih-sftp-fuzz-scratch/     # crash-<hash> or timeout-<hash>
+```
+
+To replay one, run the *same* `bwrap` invocation used to fuzz, but
+replace the trailing `"$repo_root/fuzz/corpus" -max_len=... -timeout=...`
+with the single crash file - and reference it by its path **inside the
+sandbox**, not the host path you just `ls`'d above:
+
+```sh
+bwrap --unshare-all --share-net --die-with-parent \
+    --ro-bind / / \
+    --bind "$repo_root/fuzz/corpus" "$repo_root/fuzz/corpus" \
+    --tmpfs /tmp \
+    --bind /tmp/nih-sftp-fuzz-scratch /tmp/scratch \
+    --chdir /tmp/scratch \
+    "$repo_root/fuzz/fuzz_harness" /tmp/scratch/crash-<hash>
+```
+
+That last substitution matters and is easy to get backwards: the crash
+file physically lives on the host at
+`/tmp/nih-sftp-fuzz-scratch/crash-<hash>`, but `--tmpfs /tmp` replaces
+everything under `/tmp` *inside* the sandbox with an empty filesystem -
+so that host path isn't reachable from inside at all. Only
+`/tmp/scratch/crash-<hash>` is, via the explicit `--bind` for the
+scratch directory. Passing a single file (rather than the corpus
+directory) puts libFuzzer into one-shot replay mode: it runs that one
+input once and exits, with a full stack trace on the crash/hang you
+already saw.
+
+**If CI found it instead**, download the `fuzz-findings` artifact from
+the failed workflow run, extract it, and use the same replay command
+above - but since the file isn't already sitting in your scratch
+directory this time, copy it there first (`cp downloaded-crash-file
+/tmp/nih-sftp-fuzz-scratch/`) so it's reachable at the same
+`/tmp/scratch/...` path inside the sandbox.
 
 `-max_len=34100` matches `MAX_PACKET` (34000) plus a little headroom for
 the length header. `-timeout=5` bounds how long a single input may run
@@ -131,8 +184,42 @@ seed. Regenerate it if the protocol helpers change:
 python3 fuzz/generate_corpus.py
 ```
 
-libFuzzer grows the corpus on its own as it discovers new coverage; you
-don't need to feed it more seeds than this to get started.
+With the writable `--bind` above, libFuzzer grows this corpus on disk
+as it discovers new coverage during a run, the same way it would outside
+a sandbox - you don't need to feed it more seeds than this to get
+started.
+
+## Should the corpus be committed?
+
+Deliberately, no - `fuzz/corpus/` only ever holds the small seed set
+`generate_corpus.py` produces; growth discovered during a fuzzing run is
+real (and useful for that session), but isn't checked into version
+control, and the CI job doesn't need the writable `--bind` above at all
+for exactly this reason - a single run already keeps newly-discovered
+inputs in memory for further mutation regardless of whether they're also
+written to disk, so a read-only corpus directory doesn't hurt CI's
+in-run effectiveness, only persistence *across* separate runs, which CI
+doesn't need anyway (its workspace is discarded after the job either way).
+
+The reasoning for not committing: corpus entries here are raw SFTP
+wire-format bytes - length prefixes, opcodes, field layouts - not
+something with a stable, self-describing structure. They don't become
+"invalid" as the protocol code changes (`LLVMFuzzerTestOneInput` accepts
+any byte sequence), but they can quietly become *stale* - a `REQUIRE()`
+check tightening, or a field layout changing, could make an old entry
+silently degrade from "exercises interesting deep logic" to "immediately
+rejected as malformed" with no signal that it happened. libFuzzer has no
+built-in staleness detection for this; the closest tool is running it
+with `-merge=1` periodically, which re-evaluates the corpus against
+current coverage and drops fully-redundant entries - but that catches
+redundancy, not "this entry quietly lost its value after a refactor."
+Without deliberately running that on some cadence, a persisted, growing
+corpus becomes a maintenance liability nobody's actually watching, for a
+benefit (deeper coverage in one bounded CI run) a fresh seed set already
+mostly provides. If you want the accumulated value of a long local
+fuzzing session to persist, that's a `git add fuzz/corpus/` away
+whenever you decide it's worth it - just not something this repo does by
+default.
 
 ## CI integration
 
@@ -143,6 +230,11 @@ meaningfully, long enough to catch regressions a human wouldn't think to
 write a specific test for. It's not a substitute for a longer fuzzing
 run; if you want deeper coverage, run the harness locally for minutes to
 hours rather than seconds.
+
+If this job fails, it uploads whatever it found as a `fuzz-findings`
+artifact - see "Replaying a crash found locally" above for how to
+reproduce it on your own machine (the same steps, once you've downloaded
+and placed the file).
 
 ## Why this exists
 
