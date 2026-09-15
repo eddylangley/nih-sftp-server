@@ -40,13 +40,24 @@ only an empty scratch directory writable:
 ```sh
 mkdir -p /tmp/nih-sftp-fuzz-scratch
 
-bwrap --unshare-all --die-with-parent \
+bwrap --unshare-all --share-net --die-with-parent \
     --ro-bind / / \
     --tmpfs /tmp \
     --bind /tmp/nih-sftp-fuzz-scratch /tmp/scratch \
     --chdir /tmp/scratch \
     fuzz/fuzz_harness fuzz/corpus -max_len=34100 -timeout=5
 ```
+
+`--share-net` matters, not just `--unshare-all` on its own: without it,
+`bwrap` tries to set up a network namespace (including configuring a
+loopback interface), which fails with `bwrap: loopback: Failed
+RTM_NEWADDR: Operation not permitted` on any reasonably modern
+Ubuntu/Debian (24.04+ restricts that capability for unprivileged user
+namespaces by default - this isn't specific to this project, it's a
+common `bwrap` gotcha on current distros). We don't need network
+isolation for this harness anyway - `nih-sftp-server.c` does no
+networking of its own, only stdin/stdout - so sharing the host's network
+namespace instead of isolating it costs nothing here.
 
 `--ro-bind / /` gives the fuzzer read access to the host filesystem (so
 it can find its own binary, libraries, and the corpus) without write

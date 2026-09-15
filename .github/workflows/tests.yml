@@ -70,7 +70,7 @@ jobs:
       - name: Run fuzzer (bounded time - see fuzz/README.md for longer runs)
         run: |
           mkdir -p /tmp/nih-sftp-fuzz-scratch
-          bwrap --unshare-all --die-with-parent \
+          bwrap --unshare-all --share-net --die-with-parent \
             --ro-bind / / \
             --tmpfs /tmp \
             --bind /tmp/nih-sftp-fuzz-scratch /tmp/scratch \
