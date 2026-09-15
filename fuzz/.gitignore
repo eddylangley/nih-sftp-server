@@ -1,9 +1,6 @@
 fuzz_harness
-smoke_test
-replay_test
 *.o
 crash-*
 timeout-*
 oom-*
 leak-*
-findings/

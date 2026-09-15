@@ -56,8 +56,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install clang
-        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Install clang and bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y clang bubblewrap
 
       - name: Build fuzz harness
         run: |
@@ -65,18 +65,24 @@ jobs:
             -std=gnu99 fuzz/fuzz_harness.c -o fuzz/fuzz_harness
 
       # See fuzz/README.md: this harness drives a real filesystem-touching
-      # server, so it always runs from an empty scratch directory, never
-      # the checkout itself.
+      # server with no path sanitization of its own, so it always runs
+      # inside bubblewrap - never directly against a real filesystem.
       - name: Run fuzzer (bounded time - see fuzz/README.md for longer runs)
         run: |
-          mkdir -p /tmp/nih-sftp-fuzz && cd /tmp/nih-sftp-fuzz
-          "$GITHUB_WORKSPACE/fuzz/fuzz_harness" "$GITHUB_WORKSPACE/fuzz/corpus" \
-            -max_len=34100 -timeout=5 -max_total_time=120
+          mkdir -p /tmp/nih-sftp-fuzz-scratch
+          bwrap --unshare-all --die-with-parent \
+            --ro-bind / / \
+            --tmpfs /tmp \
+            --bind /tmp/nih-sftp-fuzz-scratch /tmp/scratch \
+            --chdir /tmp/scratch \
+            "$GITHUB_WORKSPACE/fuzz/fuzz_harness" "$GITHUB_WORKSPACE/fuzz/corpus" \
+            -max_len=34100 -timeout=5 -max_total_time=120 \
+            -artifact_prefix=/tmp/scratch/
 
       - name: Upload any crash/hang artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-findings
-          path: /tmp/nih-sftp-fuzz/crash-*
+          path: /tmp/nih-sftp-fuzz-scratch/crash-*
           if-no-files-found: ignore

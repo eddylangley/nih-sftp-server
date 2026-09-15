@@ -23,20 +23,24 @@ only the server's own *legitimate* control-flow exits are redirected.
 Nothing in nih-sftp-server.c itself is modified - this file lives
 entirely outside it and #includes it unchanged.
 
+This harness drives real filesystem operations with no path sanitization
+of its own (nih-sftp-server.c relies on sshd's ChrootDirectory for that
+in real deployment), so it must always be run sandboxed - see
+fuzz/README.md for the required bubblewrap command. Don't run this
+directly against a real filesystem.
+
 Build (requires clang - GCC does not implement libFuzzer):
     clang -O1 -g -fsanitize=fuzzer,address,undefined \
         -std=gnu99 fuzz/fuzz_harness.c -o fuzz/fuzz_harness
 
-Run:
-    ./fuzz/fuzz_harness fuzz/corpus -max_len=34100 -timeout=5
+Run: see fuzz/README.md - this must be run inside bubblewrap, not
+invoked directly.
 
 A -timeout well under libFuzzer's 1200s default matters here specifically:
 this project has already had one real bug (an infinite loop in
 sftp_readdir(), fixed during development - see tests/README.md) that
 would only show up as a hang, not a crash. A short --timeout is what
 makes that whole bug *class* detectable at all.
-
-See fuzz/README.md for more.
 */
 #include <setjmp.h>
 #include <stdint.h>
