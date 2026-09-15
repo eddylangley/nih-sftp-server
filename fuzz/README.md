@@ -35,18 +35,30 @@ README). A fuzzer-mutated `OPEN`/`RENAME`/`SYMLINK`/`REALPATH` path can
 easily contain `../..` or an absolute path, and nothing stops it from
 being used. Never run the harness directly against a real filesystem -
 always run it inside `bwrap`, which gives it its own throwaway root with
-only an empty scratch directory writable:
+only an empty scratch directory writable. **Run this from the repo
+root** - the command below captures that directory as an absolute path
+before invoking `bwrap`:
 
 ```sh
 mkdir -p /tmp/nih-sftp-fuzz-scratch
+repo_root="$(pwd)"
 
 bwrap --unshare-all --share-net --die-with-parent \
     --ro-bind / / \
     --tmpfs /tmp \
     --bind /tmp/nih-sftp-fuzz-scratch /tmp/scratch \
     --chdir /tmp/scratch \
-    fuzz/fuzz_harness fuzz/corpus -max_len=34100 -timeout=5
+    "$repo_root/fuzz/fuzz_harness" "$repo_root/fuzz/corpus" -max_len=34100 -timeout=5
 ```
+
+The paths to the harness binary and corpus **must** be absolute, not
+`fuzz/fuzz_harness fuzz/corpus` - `--chdir /tmp/scratch` changes the
+working directory *inside* the sandbox before the command runs, so a
+relative path resolves against that empty scratch directory, not
+wherever you were in your checkout when you ran `bwrap`
+(`$repo_root="$(pwd)"` above is captured by the outer shell before
+`bwrap` starts, so it's unaffected by the `--chdir` and correctly points
+back at your checkout).
 
 `--share-net` matters, not just `--unshare-all` on its own: without it,
 `bwrap` tries to set up a network namespace (including configuring a
@@ -97,8 +109,11 @@ clang -O1 -g -fsanitize=fuzzer,address,undefined \
 Then run it as shown above. Useful flags: `-jobs=N -workers=N` for
 parallel fuzzing; `-max_total_time=N` to bound a run to N seconds;
 `-artifact_prefix=/path/` to control where crash/hang reproducers land
-(as `crash-<hash>` / `timeout-<hash>` files - replay one directly:
-`fuzz_harness crash-abc123`, also inside `bwrap`).
+(as `crash-<hash>` / `timeout-<hash>` files inside the scratch
+directory). To replay one, run the same `bwrap` command as above but
+with the crash file's absolute host path appended as an extra argument
+after `$repo_root/fuzz/corpus` - same absolute-path requirement applies
+to it as to the harness binary and corpus.
 
 `-max_len=34100` matches `MAX_PACKET` (34000) plus a little headroom for
 the length header. `-timeout=5` bounds how long a single input may run
