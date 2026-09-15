@@ -59,6 +59,18 @@ jobs:
       - name: Install clang and bubblewrap
         run: sudo apt-get update && sudo apt-get install -y clang bubblewrap
 
+      # GitHub-hosted ubuntu-latest runners set
+      # kernel.apparmor_restrict_unprivileged_userns=1 by default (Ubuntu
+      # 24.04+ restricts unprivileged user-namespace creation via AppArmor),
+      # which blocks the user namespace bubblewrap needs to sandbox anything
+      # at all - not just the network-related loopback issue from before,
+      # a step earlier than that. This is an ephemeral, single-job VM that's
+      # destroyed after this run, so relaxing this here doesn't affect
+      # anything persistent - see fuzz/README.md for the equivalent local
+      # command and its trade-off.
+      - name: Allow unprivileged user namespaces (needed by bubblewrap)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Build fuzz harness
         run: |
           clang -O1 -g -fsanitize=fuzzer,address,undefined \

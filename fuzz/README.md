@@ -59,6 +59,27 @@ isolation for this harness anyway - `nih-sftp-server.c` does no
 networking of its own, only stdin/stdout - so sharing the host's network
 namespace instead of isolating it costs nothing here.
 
+**If you instead see `bwrap: setting up uid map: Permission denied`**,
+that's a step earlier and separate: Ubuntu 24.04+ (and some other current
+distros) set `kernel.apparmor_restrict_unprivileged_userns=1` by default,
+which blocks the user namespace `bwrap` needs to sandbox *anything* at
+all, before it even gets to networking. Fix:
+
+```sh
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
+
+Worth knowing what that trades away: unprivileged user namespaces have
+historically been an attack surface for local privilege-escalation bugs,
+which is exactly why distros started restricting them - this setting
+exists for a real reason, not by accident. Relaxing it system-wide isn't
+something to do without thinking about it on a machine you don't fully
+control; on a scoped CI runner (see `.github/workflows/tests.yml`, which
+does exactly this) or a personal dev machine you administer yourself,
+it's a reasonable, common trade-off. The command above only changes the
+running kernel's setting for the current boot - it doesn't persist across
+a reboot unless you also write it to a file under `/etc/sysctl.d/`.
+
 `--ro-bind / /` gives the fuzzer read access to the host filesystem (so
 it can find its own binary, libraries, and the corpus) without write
 access to any of it; `--tmpfs /tmp` plus the `--bind` makes the one
