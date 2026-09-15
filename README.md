@@ -44,7 +44,6 @@ top of the file:
 | Macro | Needed for |
 |---|---|
 | `_XOPEN_SOURCE 700` | `telldir`/`seekdir`, `lstat`, `readlink`/`symlink`, `fstatat`/`fdopendir` |
-| `_BSD_SOURCE` (or `_DEFAULT_SOURCE`) | `futimes` — without it, `SSH_FXP_FSETSTAT` degrades gracefully to `SSH_FX_OP_UNSUPPORTED` |
 
 See `man 7 feature_test_macros` if you need to adjust these for your
 platform.
@@ -69,6 +68,24 @@ Match Group sftpusers
 
 (Consult your `sshd_config` documentation for the exact chroot/jail
 mechanism you want; the details are outside this server's scope.)
+
+### Dropbear
+
+Dropbear doesn't read a `Subsystem` directive at runtime the way OpenSSH's
+`sshd` does — it execs a fixed path baked in at compile time via the
+`SFTPSERVER_PATH` macro (the default varies by distro/build, commonly
+something like `/usr/lib/sftp-server` or `/usr/lib/openssh/sftp-server`).
+To point Dropbear at `nih-sftp-server`, either:
+
+- find the path your Dropbear binary was built with (e.g.
+  `strings $(which dropbear) | grep sftp-server`) and replace or symlink
+  that path to point at `nih-sftp-server`, or
+- rebuild Dropbear with `-DSFTPSERVER_PATH=/path/to/sftp-server` (or set it
+  in `localoptions.h`) so it execs this binary directly.
+
+Once exec'd, `nih-sftp-server` behaves identically regardless of which
+`sshd`-equivalent launched it — it only speaks SFTPv3 over its
+stdin/stdout and has no awareness of the parent process.
 
 ## Compatibility with real-world clients: `OPENSSH_COMPAT`
 
@@ -124,15 +141,7 @@ rather not post publicly first, contact the maintainer directly).
 
 ## Testing
 
-There's no bundled test suite yet, but the server's design — reading a
-fixed protocol from stdin and writing a fixed protocol to stdout, no
-sockets or global state beyond the handle table — makes it straightforward
-to test by piping crafted SFTP packets to the binary and inspecting the
-response. Building with `-fsanitize=address,undefined` (and, if you want
-to specifically check that `REQUIRE()` checks survive release builds,
-`-DNDEBUG -fsanitize=address`) is a good way to catch memory-safety
-regressions.
-
+See [tests](tests/) and [fuzz](fuzz/)
 ## License
 
 BSD 3-Clause. See the license header at the top of `nih-sftp-server.c`.
