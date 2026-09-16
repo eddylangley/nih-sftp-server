@@ -1,0 +1,114 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          gcc --version
+          python3 --version
+
+      - name: Run test suite (builds normal / ASan / NDEBUG+ASan / draft-spec variants)
+        run: python3 tests/run_all.py -v
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gcc -fanalyzer
+        run: |
+          gcc -fanalyzer -Wall -Wextra -std=iso9899:1999 -c nih-sftp-server.c -o /tmp/analyzer.o
+
+  strict-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        openssh_compat: ["", "-DOPENSSH_COMPAT=0"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with project's own strict flags
+        run: |
+          gcc -O2 -Wall -Wextra -std=iso9899:1999 -pedantic-errors \
+            ${{ matrix.openssh_compat }} nih-sftp-server.c -o /tmp/sftp-server
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runs as the non-root "runner" user by default on GitHub-hosted
+      # runners, so the EACCES/EPERM-dependent tests (skipped under root -
+      # see testutil.skip_if_root) run for real here, not just the rest.
+      - name: Measure coverage (gcov)
+        run: python3 tests/run_coverage.py
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang and bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y clang bubblewrap
+
+      # GitHub-hosted ubuntu-latest runners set
+      # kernel.apparmor_restrict_unprivileged_userns=1 by default (Ubuntu
+      # 24.04+ restricts unprivileged user-namespace creation via AppArmor),
+      # which blocks the user namespace bubblewrap needs to sandbox anything
+      # at all - not just the network-related loopback issue from before,
+      # a step earlier than that. This is an ephemeral, single-job VM that's
+      # destroyed after this run, so relaxing this here doesn't affect
+      # anything persistent - see fuzz/README.md for the equivalent local
+      # command and its trade-off.
+      - name: Allow unprivileged user namespaces (needed by bubblewrap)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build fuzz harness
+        run: |
+          clang -O1 -g -fsanitize=fuzzer,address,undefined \
+            -std=gnu99 fuzz/fuzz_harness.c -o fuzz/fuzz_harness
+
+      # See fuzz/README.md: this harness drives a real filesystem-touching
+      # server with no path sanitization of its own, so it always runs
+      # inside bubblewrap - never directly against a real filesystem.
+      # /tmp/scratch (the server's sandboxed cwd) and /tmp/artifacts
+      # (libFuzzer's crash/hang output) must be two separate binds, not
+      # one - see "Two separate writable binds, not one" in
+      # fuzz/README.md. A fuzzer-generated SSH_FXP_SETSTAT on "." with
+      # permissions=0 makes the server's own chmod() legitimately strip
+      # access from whatever directory is the sandbox's cwd; if that's
+      # also where -artifact_prefix points, a crash found later in the
+      # same run can silently fail to write its own artifact file.
+      - name: Run fuzzer (bounded time - see fuzz/README.md for longer runs)
+        run: |
+          mkdir -p /tmp/nih-sftp-fuzz-scratch /tmp/nih-sftp-fuzz-artifacts
+          bwrap --unshare-all --share-net --die-with-parent \
+            --ro-bind / / \
+            --tmpfs /tmp \
+            --bind /tmp/nih-sftp-fuzz-scratch /tmp/scratch \
+            --bind /tmp/nih-sftp-fuzz-artifacts /tmp/artifacts \
+            --chdir /tmp/scratch \
+            "$GITHUB_WORKSPACE/fuzz/fuzz_harness" "$GITHUB_WORKSPACE/fuzz/corpus" \
+            -max_len=34100 -timeout=5 -max_total_time=120 \
+            -artifact_prefix=/tmp/artifacts/
+
+      - name: Upload any crash/hang artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: |
+            /tmp/nih-sftp-fuzz-artifacts/crash-*
+            /tmp/nih-sftp-fuzz-artifacts/timeout-*
+            /tmp/nih-sftp-fuzz-artifacts/oom-*
+            /tmp/nih-sftp-fuzz-artifacts/leak-*
+          if-no-files-found: ignore
+          if-no-files-found: ignore

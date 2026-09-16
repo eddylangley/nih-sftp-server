@@ -32,17 +32,18 @@ This code originates from http://www.eddylangley.net/nih/sftp/
 
 gcc -O2 -Wall -Wextra -Werror -std=iso9899:1999 -pedantic-errors nih-sftp-server.c -o sftp-server
 
-If not then see "man 7 feature_test_macros". The relevant features are:
-
-_XOPEN_SOURCE for POSIX telldir, seekdir
-_XOPEN_SOURCE >=500 for POSIX lstat, telldir, seekdir, readlink, symlink
-_XOPEN_SOURCE >=700 for POSIX.1-2008 + XSI fstatat fdopendir; without this 
-realpath() is broken and sftp_realpath will return unsupported 
-_BSD_SOURCE for futimes; otherwise sftp_fsetstat() will return unsupported
+If not then see "man 7 feature_test_macros". This code aims for strict POSIX
+compliance: _XOPEN_SOURCE 700 requests conformance to The Open Group Base
+Specifications Issue 7 (SUSv4), which is POSIX.1-2008 plus the XSI extension
+this code relies on (telldir/seekdir, fstatat/fdopendir, futimens/utimensat).
+Unlike glibc's _DEFAULT_SOURCE, this is a real standard rather than a
+glibc-specific "give me the usual extras" macro, and should be honored by
+any XPG7/SUSv4-conforming libc, not just glibc.
 */
+#ifndef _XOPEN_SOURCE
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
-/* GCC folks may prefer to #define _DEFAULT_SOURCE but this is not obviously POSIX compliant */
+#endif
+/* The above defines _POSIX_C_SOURCE 200809L */
 
 /* Define OPENSSH_COMPAT to match OpenSSH's sftp-server in the small number of
 places where it deviates from the literal SFTPv3 draft. OpenSSH is the de
@@ -73,9 +74,11 @@ would just leave the macro undefined for the #ifndef below to redefine). */
 
 /* POSIX and friends */
 #include <unistd.h> /* Many things */
-#include <fcntl.h>  /* O_RDONLY etc */
-#include <sys/time.h> /* utimes, futimes */
-#include <sys/stat.h> /* f/l/stat/at, chmod */
+#include <fcntl.h>  /* O_RDONLY, AT_FDCWD etc */
+#include <time.h> /* struct timespec */
+#include <sys/select.h> /* select, fd_set - the POSIX-specified home for these,
+rather than relying on sys/time.h to provide them transitively as some libcs do */
+#include <sys/stat.h> /* f/l/stat/at, chmod, futimens, utimensat */
 #include <dirent.h> /* DIR*, readdir and friends */
 #include <libgen.h> /* dirname, basename */
 
@@ -140,7 +143,9 @@ would just leave the macro undefined for the #ifndef below to redefine). */
 #define DEFAULT_DIR_PERM 0777
 
 /* Implementation limits */
+#ifndef MAX_PACKET
 #define MAX_PACKET 34000    /* SFTP: All servers SHOULD support packets of at least 34000 bytes */
+#endif
 #define PERM_MASK 0777
 /* Handles are represented as SSH strings, formatted as fixed-width hex. MAX_HANDLES is
 derived from MAX_HANDLE_DIGITS (rather than defined independently) so the two can never
@@ -272,7 +277,7 @@ static fxp_handle_t *get_handle(void);
 
 static void get_attrs(attrs_t *p_attrs);
 static void put_attrs(attrs_t *p_attrs);
-static void attrs_to_tv(attrs_t *p_attr, struct timeval tv[2]);
+static void attrs_to_timespec(attrs_t *p_attr, struct timespec ts[2]);
 
 /* Portability and POSIX <-> SFTP conversion */
 static int pflags_to_unix(uint32_t pflags);
@@ -785,10 +790,10 @@ static void sftp_setstat(void)
     }
     if (attr.flags & SSH_FILEXFER_ATTR_ACMODTIME)
     {
-        struct timeval tv[2];
+        struct timespec ts[2];
 
-        attrs_to_tv(&attr, tv);
-        if (utimes(sz_path, tv) < 0)
+        attrs_to_timespec(&attr, ts);
+        if (utimensat(AT_FDCWD, sz_path, ts, 0) < 0)
         {
             put_status(id, errno_to_sftp(errno));
             return;
@@ -807,7 +812,6 @@ static void sftp_setstat(void)
 
 static void sftp_fsetstat(void)
 {
-#ifdef _BSD_SOURCE
     uint32_t id = get_uint32();
     fxp_handle_t *p_handle = get_handle();
     uint32_t status = SSH_FX_FAILURE;
@@ -826,9 +830,9 @@ static void sftp_fsetstat(void)
         }
         if (attr.flags & SSH_FILEXFER_ATTR_ACMODTIME)
         {
-            struct timeval tv[2];
-            attrs_to_tv(&attr, tv);
-            if (futimes(p_handle->fd, tv) < 0)
+            struct timespec ts[2];
+            attrs_to_timespec(&attr, ts);
+            if (futimens(p_handle->fd, ts) < 0)
             {
                 put_status(id, errno_to_sftp(errno));
                 return;
@@ -845,9 +849,6 @@ static void sftp_fsetstat(void)
         status = SSH_FX_OK;
     }
     put_status(id, status);
-#else
-    put_status(get_uint32(), SSH_FX_OP_UNSUPPORTED);    
-#endif
 }
 
 static void sftp_opendir(void)
@@ -882,6 +883,12 @@ static void sftp_opendir(void)
                 put_handle(id, handle);
                 return;
             }
+            else
+            {
+                /* Out of handles. closedir() also closes the underlying fd -
+                mirrors sftp_open()'s close(fd) on the same condition. */
+                closedir(p_dir);
+            }
         }
     }
     put_status(id, status);
@@ -895,7 +902,7 @@ static void sftp_readdir(void)
     uint32_t id = get_uint32();
     fxp_handle_t *p_handle = get_handle();
 
-    if (!p_handle)
+    if (!p_handle || (p_handle->use != HANDLE_DIR))
     {
         put_status(id, SSH_FX_FAILURE);
         return;
@@ -937,6 +944,7 @@ static void sftp_readdir(void)
                 /* We couldn't write the name to the buffer and it's not the only 
                 name in the buffer - rewind the dir pointer and leave it to next time */
                 seekdir(p_handle->p_dir, dir_posn);
+                break;
             }
             /* else - we skip entries too long to ever report! This seems more helpful than
             returning an error and refusing to read anything. */
@@ -1015,7 +1023,6 @@ static void sftp_rmdir(void)
 
 static void sftp_realpath(void)
 {
-#if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200809L
     uint32_t id = get_uint32();
     uint32_t path_len;
     const char *sz_path = get_string(&path_len);
@@ -1111,9 +1118,6 @@ static void sftp_realpath(void)
     free(sz_fullname);  /* Storage is malloc'd by C library or OS */
     memset(&attr, 0, sizeof(attr));
     put_attrs(&attr);/* dummy attributes - why does SFTP specify this? Why not real attributes?*/
-#else
-    put_status(get_uint32(), SSH_FX_OP_UNSUPPORTED);    
-#endif
 }
 
 static void sftp_rename(void)
@@ -1149,7 +1153,17 @@ static void sftp_readlink(void)
     put_byte(SSH_FXP_NAME);
     put_uint32(id);
     put_uint32(1);  /* 1 name */
-    
+
+    /* Compile-time guard: obuff.count here is always MAX_PACKET minus the
+    9-byte NAME/id/count header just written above. If MAX_PACKET is small
+    enough that this underflows, `space` (unsigned) wraps to a huge value
+    and gets handed to readlink() as a buffer size - a real buffer overflow
+    into whatever follows obuff.data, not just a logic bug. Mirrors the
+    `space = ...` expression below operator-for-operator so the two can't
+    silently drift apart. */
+    { enum { readlink_min_max_packet_check =
+        1 / ((((int)MAX_PACKET - 1 - 4 - 4 - MAX_ATTRS_BYTES) / 2 - (int)sizeof(uint32_t)) > 0) }; }
+
     /* After attrs, space is two names - two SSH strings with 4-byte length fields. */
     space = (obuff.count - MAX_ATTRS_BYTES)/2 - sizeof(uint32_t);
     p_target = (char *)obuff.p_data + sizeof(uint32_t);
@@ -1553,12 +1567,12 @@ static void put_attrs(attrs_t *p_attrs)
     }
 }
 
-static void attrs_to_tv(attrs_t *p_attr, struct timeval tv[2])
+static void attrs_to_timespec(attrs_t *p_attr, struct timespec ts[2])
 {
-    tv[0].tv_sec = p_attr->atime;
-    tv[0].tv_usec = 0;
-    tv[1].tv_sec = p_attr->mtime;
-    tv[1].tv_usec = 0;
+    ts[0].tv_sec = p_attr->atime;
+    ts[0].tv_nsec = 0;
+    ts[1].tv_sec = p_attr->mtime;
+    ts[1].tv_nsec = 0;
 }
 
 /* Map portable flags to unix flags */
