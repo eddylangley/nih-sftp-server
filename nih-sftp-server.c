@@ -143,7 +143,9 @@ rather than relying on sys/time.h to provide them transitively as some libcs do 
 #define DEFAULT_DIR_PERM 0777
 
 /* Implementation limits */
+#ifndef MAX_PACKET
 #define MAX_PACKET 34000    /* SFTP: All servers SHOULD support packets of at least 34000 bytes */
+#endif
 #define PERM_MASK 0777
 /* Handles are represented as SSH strings, formatted as fixed-width hex. MAX_HANDLES is
 derived from MAX_HANDLE_DIGITS (rather than defined independently) so the two can never
@@ -1151,7 +1153,17 @@ static void sftp_readlink(void)
     put_byte(SSH_FXP_NAME);
     put_uint32(id);
     put_uint32(1);  /* 1 name */
-    
+
+    /* Compile-time guard: obuff.count here is always MAX_PACKET minus the
+    9-byte NAME/id/count header just written above. If MAX_PACKET is small
+    enough that this underflows, `space` (unsigned) wraps to a huge value
+    and gets handed to readlink() as a buffer size - a real buffer overflow
+    into whatever follows obuff.data, not just a logic bug. Mirrors the
+    `space = ...` expression below operator-for-operator so the two can't
+    silently drift apart. */
+    { enum { readlink_min_max_packet_check =
+        1 / ((((int)MAX_PACKET - 1 - 4 - 4 - MAX_ATTRS_BYTES) / 2 - (int)sizeof(uint32_t)) > 0) }; }
+
     /* After attrs, space is two names - two SSH strings with 4-byte length fields. */
     space = (obuff.count - MAX_ATTRS_BYTES)/2 - sizeof(uint32_t);
     p_target = (char *)obuff.p_data + sizeof(uint32_t);
