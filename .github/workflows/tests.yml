@@ -25,7 +25,7 @@ jobs:
 
       - name: gcc -fanalyzer
         run: |
-          gcc -fanalyzer -Wall -Wextra -std=iso9899:1999 -c nih-sftp-server.c -o /tmp/analyzer.o
+          gcc -fanalyzer -Wall -Wextra -Werror -std=iso9899:1999 -c nih-sftp-server.c -o /tmp/analyzer.o
 
   strict-build:
     runs-on: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
 
       - name: Build with project's own strict flags
         run: |
-          gcc -O2 -Wall -Wextra -std=iso9899:1999 -pedantic-errors \
+          gcc -O2 -Wall -Wextra -Werror -std=iso9899:1999 -pedantic-errors \
             ${{ matrix.openssh_compat }} nih-sftp-server.c -o /tmp/sftp-server
 
   coverage:
@@ -110,5 +110,4 @@ jobs:
             /tmp/nih-sftp-fuzz-artifacts/timeout-*
             /tmp/nih-sftp-fuzz-artifacts/oom-*
             /tmp/nih-sftp-fuzz-artifacts/leak-*
-          if-no-files-found: ignore
           if-no-files-found: ignore
