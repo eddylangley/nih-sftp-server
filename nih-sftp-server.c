@@ -943,6 +943,7 @@ static void sftp_readdir(void)
                 /* We couldn't write the name to the buffer and it's not the only 
                 name in the buffer - rewind the dir pointer and leave it to next time */
                 seekdir(p_handle->p_dir, dir_posn);
+                break;
             }
             /* else - we skip entries too long to ever report! This seems more helpful than
             returning an error and refusing to read anything. */
