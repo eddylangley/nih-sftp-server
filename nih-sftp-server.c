@@ -882,6 +882,12 @@ static void sftp_opendir(void)
                 put_handle(id, handle);
                 return;
             }
+            else
+            {
+                /* Out of handles. closedir() also closes the underlying fd -
+                mirrors sftp_open()'s close(fd) on the same condition. */
+                closedir(p_dir);
+            }
         }
     }
     put_status(id, status);
