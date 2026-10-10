@@ -77,3 +77,26 @@ def require_working_asan(test_class):
 
     test_class.setUpClass = wrapped_setUpClass
     return test_class
+
+
+def require_musl_gcc(test_class):
+    """Class decorator: skip the whole test class if musl-gcc isn't
+    installed/working on this host, rather than every test method failing
+    with a confusing "musl-gcc: command not found". See
+    build.musl_gcc_available's docstring.
+    """
+    original_setUpClass = test_class.setUpClass
+
+    @classmethod
+    def wrapped_setUpClass(cls):
+        if not build.musl_gcc_available():
+            raise unittest.SkipTest(
+                "musl-gcc is not installed (or doesn't work) on this host - "
+                "install the musl-tools package (e.g. `apt install "
+                "musl-tools` on Debian/Ubuntu) to run this. CI always has "
+                "it installed, so this only skips locally."
+            )
+        original_setUpClass()
+
+    test_class.setUpClass = wrapped_setUpClass
+    return test_class

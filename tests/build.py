@@ -25,7 +25,7 @@ if MAX_PACKET != DEFAULT_MAX_PACKET:
     COMMON_FLAGS = [*COMMON_FLAGS, f"-DMAX_PACKET={MAX_PACKET}"]
 
 
-def _compile(name, extra_flags):
+def _compile(name, extra_flags, cc="gcc"):
     if not SOURCE.exists():
         raise FileNotFoundError(
             f"{SOURCE} not found - run tests from a checkout with "
@@ -33,7 +33,7 @@ def _compile(name, extra_flags):
         )
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     out = BUILD_DIR / name
-    cmd = ["gcc", *COMMON_FLAGS, *extra_flags, str(SOURCE), "-o", str(out)]
+    cmd = [cc, *COMMON_FLAGS, *extra_flags, str(SOURCE), "-o", str(out)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(
@@ -117,7 +117,57 @@ def coverage_draft():
     return _compile("sftp-server-coverage-draft", ["-O0", "-g", "--coverage", "-DOPENSSH_COMPAT=0"])
 
 
+@functools.lru_cache(maxsize=None)
+def musl_normal():
+    """Plain optimized build under musl-gcc, for tests/test_musl_smoke.py.
+
+    No ASan/UBSan variant exists for musl on purpose: musl-gcc on Ubuntu
+    links against glibc's libasan/libubsan (they're glibc shared libraries,
+    not part of musl), and musl's dynamic loader can't find or load them at
+    runtime - confirmed directly (not via ldd, which fails for unrelated
+    reasons on musl binaries) by running a musl+ASan build and seeing
+    "Error loading shared library libasan.so.8". A fully static link isn't
+    a workaround either - gcc rejects -static combined with -fsanitize=
+    address outright, a general ASan limitation, not specific to musl. So
+    this variant - and everything in test_musl_smoke.py - is a plain
+    functional build, not a memory-safety one.
+    """
+    return _compile("sftp-server-musl-normal", ["-O2"], cc="musl-gcc")
+
+
 ALL_VARIANTS = (normal, asan, ndebug_asan, draft_spec_asan)
+
+
+@functools.lru_cache(maxsize=None)
+def musl_gcc_available() -> bool:
+    """True if musl-gcc is installed and a trivial build under it actually
+    runs on this host (dynamically linked - see musl_normal's docstring for
+    why that's fine despite ldd's confusing failure mode for musl binaries).
+
+    Mirrors asan_functional()'s shape: tests/test_musl_smoke.py skips
+    cleanly via require_musl_gcc when this is False, rather than every test
+    method failing with a confusing "musl-gcc: command not found".
+    """
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    probe_c = BUILD_DIR / "_musl_probe.c"
+    probe_bin = BUILD_DIR / "_musl_probe"
+    probe_c.write_text("int main(void) { return 0; }\n")
+
+    try:
+        compiled = subprocess.run(
+            ["musl-gcc", "-O0", str(probe_c), "-o", str(probe_bin)],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return False
+    if compiled.returncode != 0:
+        return False
+
+    try:
+        ran = subprocess.run([str(probe_bin)], capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    return ran.returncode == 0
 
 
 @functools.lru_cache(maxsize=None)
