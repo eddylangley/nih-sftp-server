@@ -24,8 +24,17 @@ MAX_PACKET = int(os.environ.get("NIH_SFTP_MAX_PACKET", DEFAULT_MAX_PACKET))
 if MAX_PACKET != DEFAULT_MAX_PACKET:
     COMMON_FLAGS = [*COMMON_FLAGS, f"-DMAX_PACKET={MAX_PACKET}"]
 
+# NIH_SFTP_CC swaps the compiler for every variant below except
+# coverage()/coverage_draft() (gcov's --coverage is gcc-specific - clang's
+# equivalent is a different flow via llvm-cov, out of scope here) and
+# musl_normal() (which always means musl-gcc specifically, regardless of
+# this). Unlike musl, clang+glibc+ASan/UBSan is well-supported - verified
+# directly, not assumed - so this lets the *entire* existing suite run
+# under clang too, not just a limited smoke test.
+CC = os.environ.get("NIH_SFTP_CC", "gcc")
 
-def _compile(name, extra_flags):
+
+def _compile(name, extra_flags, cc=CC):
     if not SOURCE.exists():
         raise FileNotFoundError(
             f"{SOURCE} not found - run tests from a checkout with "
@@ -33,7 +42,7 @@ def _compile(name, extra_flags):
         )
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     out = BUILD_DIR / name
-    cmd = ["gcc", *COMMON_FLAGS, *extra_flags, str(SOURCE), "-o", str(out)]
+    cmd = [cc, *COMMON_FLAGS, *extra_flags, str(SOURCE), "-o", str(out)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(
@@ -100,9 +109,11 @@ def coverage():
     the two genuinely-internal assert()s (see nih-sftp-server.c's REQUIRE
     comment) so they'd never show up as coverage-able lines at all, and
     combining with a sanitizer adds noise we don't need here - coverage
-    just wants to know which lines executed.
+    just wants to know which lines executed. Always gcc regardless of
+    NIH_SFTP_CC - --coverage means gcov specifically, which run_coverage.py
+    parses directly; clang's equivalent is a different llvm-cov flow.
     """
-    return _compile("sftp-server-coverage", ["-O0", "-g", "--coverage"])
+    return _compile("sftp-server-coverage", ["-O0", "-g", "--coverage"], cc="gcc")
 
 
 @functools.lru_cache(maxsize=None)
@@ -112,18 +123,73 @@ def coverage_draft():
     A separate binary is required to get coverage of the #else branches in
     sftp_realpath/sftp_symlink at all - they're compiled out entirely of
     the default coverage() binary, the same way any #ifdef'd-out code is
-    invisible to gcov.
+    invisible to gcov. Always gcc regardless of NIH_SFTP_CC - see
+    coverage()'s docstring.
     """
-    return _compile("sftp-server-coverage-draft", ["-O0", "-g", "--coverage", "-DOPENSSH_COMPAT=0"])
+    return _compile("sftp-server-coverage-draft", ["-O0", "-g", "--coverage", "-DOPENSSH_COMPAT=0"], cc="gcc")
+
+
+@functools.lru_cache(maxsize=None)
+def musl_normal():
+    """Plain optimized build under musl-gcc, for tests/test_musl_smoke.py.
+
+    No ASan/UBSan variant exists for musl on purpose: musl-gcc on Ubuntu
+    links against glibc's libasan/libubsan (they're glibc shared libraries,
+    not part of musl), and musl's dynamic loader can't find or load them at
+    runtime - confirmed directly (not via ldd, which fails for unrelated
+    reasons on musl binaries) by running a musl+ASan build and seeing
+    "Error loading shared library libasan.so.8". A fully static link isn't
+    a workaround either - gcc rejects -static combined with -fsanitize=
+    address outright, a general ASan limitation, not specific to musl. So
+    this variant - and everything in test_musl_smoke.py - is a plain
+    functional build, not a memory-safety one.
+    """
+    return _compile("sftp-server-musl-normal", ["-O2"], cc="musl-gcc")
 
 
 ALL_VARIANTS = (normal, asan, ndebug_asan, draft_spec_asan)
 
 
 @functools.lru_cache(maxsize=None)
+def musl_gcc_available() -> bool:
+    """True if musl-gcc is installed and a trivial build under it actually
+    runs on this host (dynamically linked - see musl_normal's docstring for
+    why that's fine despite ldd's confusing failure mode for musl binaries).
+
+    Mirrors asan_functional()'s shape: tests/test_musl_smoke.py skips
+    cleanly via require_musl_gcc when this is False, rather than every test
+    method failing with a confusing "musl-gcc: command not found".
+    """
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    probe_c = BUILD_DIR / "_musl_probe.c"
+    probe_bin = BUILD_DIR / "_musl_probe"
+    probe_c.write_text("int main(void) { return 0; }\n")
+
+    try:
+        compiled = subprocess.run(
+            ["musl-gcc", "-O0", str(probe_c), "-o", str(probe_bin)],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return False
+    if compiled.returncode != 0:
+        return False
+
+    try:
+        ran = subprocess.run([str(probe_bin)], capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    return ran.returncode == 0
+
+
+@functools.lru_cache(maxsize=None)
 def asan_functional() -> bool:
     """True if a trivial AddressSanitizer-instrumented binary actually runs
-    on this host, False if ASan itself is broken here.
+    on this host under the current NIH_SFTP_CC, False if ASan itself is
+    broken here. Probing with the same compiler the real asan()/
+    ndebug_asan()/draft_spec_asan() variants will actually use matters -
+    gcc's and clang's ASan support can differ on a given host even though
+    both are generally well-supported with glibc.
 
     This matters because ASan has a known bug on some 64-bit ARM boards -
     including, per Debian bug #1115578, Raspberry Pi 3 and 4 (but not 5) -
@@ -150,10 +216,13 @@ def asan_functional() -> bool:
     probe_bin = BUILD_DIR / "_asan_probe"
     probe_c.write_text("int main(void) { return 0; }\n")
 
-    compiled = subprocess.run(
-        ["gcc", "-O0", "-fsanitize=address", str(probe_c), "-o", str(probe_bin)],
-        capture_output=True, text=True,
-    )
+    try:
+        compiled = subprocess.run(
+            [CC, "-O0", "-fsanitize=address", str(probe_c), "-o", str(probe_bin)],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return False
     if compiled.returncode != 0:
         return False
 

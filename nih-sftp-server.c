@@ -1,4 +1,4 @@
-/*
+/* SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2014-2026, Edward Langley
 All rights reserved.
 

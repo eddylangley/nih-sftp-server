@@ -34,12 +34,22 @@ tell it to, exactly like OpenSSH's own `sftp-server`.
 ## Building
 
 ```sh
+make                              # builds ./nih-sftp-server
+make install                      # respects DESTDIR and PREFIX (default /usr/local)
+```
+
+The `Makefile` only *defaults* `CC`/`CFLAGS`/`LDFLAGS` (to the flags below)
+rather than overriding them, so a packager's own exported flags take over
+completely rather than being silently discarded. Building directly without
+the `Makefile` works just as well:
+
+```sh
 gcc -O2 -Wall -Wextra -Werror -std=iso9899:1999 -pedantic-errors nih-sftp-server.c -o sftp-server
 ```
 
 The file targets strict ISO C99 and should build warning-free with the
-above. It relies on a few POSIX feature-test macros, already set at the
-top of the file:
+above on both glibc and musl (tested with `musl-gcc`). It relies on a few
+POSIX feature-test macros, already set at the top of the file:
 
 | Macro | Needed for |
 |---|---|
@@ -136,15 +146,20 @@ gcc ... -DOPENSSH_COMPAT=0 nih-sftp-server.c -o sftp-server
   consistent with how `SSH_FXP_SETSTAT`, `SSH_FXP_FSETSTAT`, and
   `SSH_FXP_MKDIR` already handle permissions.
 
-If you find a security issue, please open an issue (or, for anything you'd
-rather not post publicly first, contact the maintainer directly).
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
 ## Testing
 
 See [tests](tests/) and [fuzz](fuzz/)
+
+## Changelog
+
+See [Releases](https://github.com/eddylangley/nih-sftp-server/releases) for what changed in each version.
+
 ## License
 
-BSD 3-Clause. See the license header at the top of `nih-sftp-server.c`.
+BSD 3-Clause. See [LICENSE](LICENSE) (also reproduced as the header at the
+top of `nih-sftp-server.c`).
 
 ## More information
 
