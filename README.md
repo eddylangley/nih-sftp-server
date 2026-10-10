@@ -34,12 +34,22 @@ tell it to, exactly like OpenSSH's own `sftp-server`.
 ## Building
 
 ```sh
+make                              # builds ./nih-sftp-server
+make install                      # respects DESTDIR and PREFIX (default /usr/local)
+```
+
+The `Makefile` only *defaults* `CC`/`CFLAGS`/`LDFLAGS` (to the flags below)
+rather than overriding them, so a packager's own exported flags take over
+completely rather than being silently discarded. Building directly without
+the `Makefile` works just as well:
+
+```sh
 gcc -O2 -Wall -Wextra -Werror -std=iso9899:1999 -pedantic-errors nih-sftp-server.c -o sftp-server
 ```
 
 The file targets strict ISO C99 and should build warning-free with the
-above. It relies on a few POSIX feature-test macros, already set at the
-top of the file:
+above on both glibc and musl (tested with `musl-gcc`). It relies on a few
+POSIX feature-test macros, already set at the top of the file:
 
 | Macro | Needed for |
 |---|---|
