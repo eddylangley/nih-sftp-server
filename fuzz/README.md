@@ -247,9 +247,14 @@ Without deliberately running that on some cadence, a persisted, growing
 corpus becomes a maintenance liability nobody's actually watching, for a
 benefit (deeper coverage in one bounded CI run) a fresh seed set already
 mostly provides. If you want the accumulated value of a long local
-fuzzing session to persist, that's a `git add fuzz/corpus/` away
-whenever you decide it's worth it - just not something this repo does by
-default.
+fuzzing session to persist, that's a deliberate step, not a plain
+`git add` - the `corpus/*` pattern in `fuzz/.gitignore` exists specifically
+to stop that from happening by accident, so a hash-named growth file needs
+`git add -f fuzz/corpus/<file>` to get past it. Give it a descriptive name
+and add a matching `!corpus/<name>` line to `fuzz/.gitignore` (and ideally
+fold it into `generate_corpus.py` so the seed set stays reproducible from
+that script alone) rather than leaving a force-added hash-named file to
+rot - just not something this repo does by default.
 
 ## CI integration
 

@@ -136,15 +136,20 @@ gcc ... -DOPENSSH_COMPAT=0 nih-sftp-server.c -o sftp-server
   consistent with how `SSH_FXP_SETSTAT`, `SSH_FXP_FSETSTAT`, and
   `SSH_FXP_MKDIR` already handle permissions.
 
-If you find a security issue, please open an issue (or, for anything you'd
-rather not post publicly first, contact the maintainer directly).
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
 ## Testing
 
 See [tests](tests/) and [fuzz](fuzz/)
+
+## Changelog
+
+See [Releases](https://github.com/eddylangley/nih-sftp-server/releases) for what changed in each version.
+
 ## License
 
-BSD 3-Clause. See the license header at the top of `nih-sftp-server.c`.
+BSD 3-Clause. See [LICENSE](LICENSE) (also reproduced as the header at the
+top of `nih-sftp-server.c`).
 
 ## More information
 
